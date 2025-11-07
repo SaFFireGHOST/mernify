@@ -16,6 +16,7 @@ import { Link } from "react-router-dom";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { useAuth } from "@/hooks/use-auth"; // add this import to get current user
 import useRoomRealtime from "@/hooks/useRoomRealtime";
+import { supabase } from '@/lib/supabaseClient';
 
 const youtubeUrlSchema = z.string().trim().regex(
   /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/)[\w-]{11}(\S*)?$/,
@@ -24,6 +25,7 @@ const youtubeUrlSchema = z.string().trim().regex(
 
 const StudyRoom = () => {
   const { roomId } = useParams();
+  const numericRoomId = Number(roomId);
   const { toast } = useToast();
   const { user } = useAuth(); // get user (so we can tell server who updated playback)
   const [showPauseMenu, setShowPauseMenu] = useState(false);
@@ -33,6 +35,38 @@ const StudyRoom = () => {
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
   const { room: realtimeRoom, loading: roomLoading, error: roomError } = useRoomRealtime(roomId);
+  const [roomTitle, setRoomTitle] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRoomTitle() {
+      if (!numericRoomId || Number.isNaN(numericRoomId)) return;
+
+      const { data, error } = await supabase
+        .from("rooms")
+        .select("title")
+        .eq("id", numericRoomId)
+        .single();
+
+      if (error) {
+        console.error("loadRoomTitle error:", error);
+        if (!cancelled) {
+          toast({
+            title: "Could not load room",
+            description: error.message ?? "Failed to fetch room title",
+            variant: "destructive",
+          });
+        }
+        return;
+      }
+
+      if (!cancelled) setRoomTitle(data?.title ?? "");
+    }
+
+    loadRoomTitle();
+    return () => { cancelled = true; };
+  }, [numericRoomId, toast]);
 
   // update youtubeUrl when rooms.video_url changes
   useEffect(() => {
@@ -140,7 +174,7 @@ const StudyRoom = () => {
               Back to Rooms
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Advanced Calculus</h1>
+          <h1 className="text-2xl font-bold">{roomTitle || "Study Room"}</h1>
           <div className="w-32" /> {/* Spacer for centering */}
         </div>
       </motion.header>

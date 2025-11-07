@@ -11,13 +11,44 @@ import thumbPhysics from "@/assets/thumb-physics.jpg";
 import thumbBiology from "@/assets/thumb-biology.jpg";
 import { useAuth } from "@/hooks/use-auth"; // Import the useAuth hook
 
-
+import DashboardStats from "@/components/DashboardStats";
 
 const Dashboard = () => {
   // state for rooms + loading/error
   const [studyRooms, setStudyRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [roomsError, setRoomsError] = useState(null);
+  const THUMBS = [thumbMath, thumbPhysics, thumbBiology];
+
+  // Fast, stable 32-bit hash (FNV-1a)
+  function hashFNV1a(str: string) {
+    let h = 0x811c9dc5; // 2166136261
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193); // 16777619
+    }
+    console.log("[hashFNV1a]", { input: str, hash: h >>> 0 });
+    return h >>> 0; // unsigned
+  }
+
+  function pickThumbById(id: string | number) {
+    const h = hashFNV1a(String(id));
+    const idx = h % THUMBS.length;
+    return THUMBS[idx];
+  }
+
+  // (optional) subject override if you want specific thumbs for known subjects
+  const SUBJECT_THUMBS: Record<string, string> = {
+    math: thumbMath,
+    physics: thumbPhysics,
+    biology: thumbBiology,
+  };
+
+  function pickThumb(room: { id: string | number; subject?: string | null }) {
+    const sub = room.subject?.toLowerCase().trim();
+    if (sub && SUBJECT_THUMBS[sub]) return SUBJECT_THUMBS[sub];
+    return pickThumbById(room.id);
+  }
 
   const { user, signOut } = useAuth(); // Get user and signOut from context
 
@@ -51,18 +82,21 @@ const Dashboard = () => {
         if (!mounted) return;
 
         // normalize DB rows to your RoomCard props
-        const normalized = rooms.map((r) => ({
-          id: String(r.id),
-          title: r.title,
-          subject: r.subject,
-          // DB doesn't have thumbnail in your schema — use default or r.thumbnail if you add it
-          thumbnail: thumbMath,
-          activeMembers: r.active_members ?? 0, // if you later track active members, replace this
-          totalDuration: "0h 0m", // derive if you store duration
-          created_at: r.created_at,
-          created_by: r.created_by,
-          video_url: r.video_url ?? null,
-        }));
+        const normalized = rooms.map((r, idx) => {
+          console.log("room:", r.id, r.title, r.subject);  // ✅ check data shape
+          return {
+            id: String(r.id),
+            title: r.title,
+            subject: r.subject,
+            thumbnail: pickThumb(r),     // or pickThumbSafe(r, idx)
+            activeMembers: r.active_members ?? 0,
+            totalDuration: "0h 0m",
+            created_at: r.created_at,
+            created_by: r.created_by,
+            video_url: r.video_url ?? null,
+          };
+        });
+
 
         setStudyRooms(normalized);
       } catch (err) {
@@ -124,7 +158,7 @@ const Dashboard = () => {
         id: String(createdRoom.id), // supabase id (bigint) -> string for consistency
         title: createdRoom.title,
         subject: createdRoom.subject,
-        thumbnail: thumbMath,         // keep your default thumbnail if Supabase doesn't store it
+        thumbnail: pickThumb(createdRoom),         // keep your default thumbnail if Supabase doesn't store it
         activeMembers: 0,
         totalDuration: "0h 0m",
         // optionally add created_at, created_by, video_url ...
@@ -204,20 +238,8 @@ const Dashboard = () => {
               Join real-time study sessions with peers around the world
             </p>
 
-            <div className="flex gap-8 justify-center mt-8">
-              <div className="flex items-center gap-2 text-foreground/80">
-                <Users className="w-5 h-5 text-primary" />
-                <span className="font-medium">35 Active Learners</span>
-              </div>
-              <div className="flex items-center gap-2 text-foreground/80">
-                <Video className="w-5 h-5 text-secondary" />
-                <span className="font-medium">3 Live Rooms</span>
-              </div>
-              <div className="flex items-center gap-2 text-foreground/80">
-                <BookOpen className="w-5 h-5 text-accent" />
-                <span className="font-medium">15+ Topics</span>
-              </div>
-            </div>
+            <DashboardStats />
+
           </motion.div>
         </div>
       </motion.section>

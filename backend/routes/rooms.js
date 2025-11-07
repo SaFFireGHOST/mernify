@@ -226,6 +226,87 @@ router.post('/:roomId/messages', verifyToken, async (req, res) => {
 });
 
 
+// ---------- NEW: GET /api/rooms/:roomId/comments ----------
+router.get('/:roomId/comments', async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+    if (isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
+
+    const { data, error } = await supabaseAdmin
+      .from('video_comments')
+      .select(`
+        id,
+        created_at,
+        user_id,
+        content,
+        video_timestamp,
+        profiles:video_comments_user_id_fkey (username)
+      `)
+      .eq('room_id', roomId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase fetch comments error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    const comments = data.map(c => ({
+      ...c,
+      username: c.profiles?.username || 'Unknown',
+      profiles: undefined // clean up
+    }));
+
+    return res.json({ comments });
+  } catch (err) {
+    console.error('Get comments error:', err);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
+// ---------- NEW: POST /api/rooms/:roomId/comments ----------
+router.post('/:roomId/comments', verifyToken, async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+    if (isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
+
+    const { content, video_timestamp = 0 } = req.body;
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ error: 'content required' });
+    }
+
+    const user_id = req.user.id.toString(); // Mongo _id → Supabase text
+
+    const { data, error } = await supabaseAdmin
+      .from('video_comments')
+      .insert([{ room_id: roomId, user_id, content, video_timestamp }])
+      .select(`
+        id,
+        created_at,
+        user_id,
+        content,
+        video_timestamp,
+        profiles:video_comments_user_id_fkey (username)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Supabase insert comment error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    const comment = {
+      ...data,
+      username: data.profiles?.username || 'Unknown',
+      profiles: undefined
+    };
+
+    return res.status(201).json({ comment });
+  } catch (err) {
+    console.error('Post comment error:', err);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
 
 
 module.exports = router;
