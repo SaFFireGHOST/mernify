@@ -1,4 +1,3 @@
-// <DOCUMENT filename="AIBotPanel.tsx">
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -6,23 +5,22 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Send, Sparkles, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
-
+import { supabase } from "@/lib/supabaseClient"; // <-- you said this exists
+import { useParams } from "react-router-dom";
 interface AIMessage {
-  id: string;
+  id: string | number;
   role: "user" | "assistant";
   content: string;
 }
 
-const AIBotPanel = () => {
-  const [messages, setMessages] = useState<AIMessage[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content:
-        "Hello! I'm your AI study assistant. I can help explain concepts, answer questions, and provide additional resources. What would you like to know?",
-    },
-  ]);
+type Props = {
+  userId?: string | null;  // <-- pass your auth user id if available
+  apiBase?: string;        // optional (default localhost)
+};
 
+const AIBotPanel = ({ userId = null, apiBase = "http://localhost:4000" }: Props) => {
+  const { roomId } = useParams<{ roomId: string }>();
+  const [messages, setMessages] = useState<AIMessage[]>([]);
   const [newQuestion, setNewQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -31,47 +29,96 @@ const AIBotPanel = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
+  // 1) Initial history load
+  useEffect(() => {
+    let isCancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/ai/history?room_id=${roomId}&limit=500`);
+        const data = await res.json();
+        if (!isCancelled && Array.isArray(data?.messages)) {
+          // Map DB rows to UI shape
+          const mapped = data.messages.map((m: any) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+          })) as AIMessage[];
+          setMessages(mapped);
+        }
+      } catch (e) {
+        console.error("History load failed", e);
+      }
+    })();
+    return () => { isCancelled = true; };
+  }, [roomId, apiBase]);
+
+  // 2) Realtime subscription to new inserts for this room
+  useEffect(() => {
+    const channel = supabase
+      .channel(`ai_messages_room_${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "ai_messages",
+          filter: `room_id=eq.${roomId}`,
+        },
+        (payload) => {
+          const row = payload.new as any;
+          const next: AIMessage = { id: row.id, role: row.role, content: row.content };
+          setMessages((prev) => [...prev, next]);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [roomId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newQuestion.trim() || isLoading) return;
 
-    const userMessage: AIMessage = {
-      id: Date.now().toString(),
-      role: "user",
-      content: newQuestion,
-    };
+    // Optimistic append (optional)
+    const tempId = `local-${Date.now()}`;
+    // setMessages((prev) => [...prev, { id: tempId, role: "user", content: newQuestion }]);
 
-    setMessages((prev) => [...prev, userMessage]);
+    const promptToSend = newQuestion;
     setNewQuestion("");
     setIsLoading(true);
 
     try {
-      const res = await fetch("http://localhost:4000/api/ai/ask", {
+      // Backend will insert both user and assistant messages
+      const res = await fetch(`${apiBase}/api/ai/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: newQuestion }),
+        body: JSON.stringify({
+          prompt: promptToSend,
+          room_id: roomId,
+          user_id: userId ?? null,
+        }),
       });
 
-      const data = await res.json();
-      if (!data.response) throw new Error("No response from AI");
+      if (!res.ok) {
+        throw new Error(`Ask failed: ${res.status}`);
+      }
 
-      const aiMessage: AIMessage = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: data.response,
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
+      // No need to manually push; realtime INSERT events will add both rows.
+      // (You can still reconcile the optimistic temp message if you want.)
     } catch (error) {
       console.error(error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 2).toString(),
-          role: "assistant",
-          content: "Sorry, something went wrong while fetching the AI response.",
-        },
-      ]);
+      // Replace optimistic message with an error bubble
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? {
+                id: tempId,
+                role: "assistant",
+                content: "Sorry, something went wrong while fetching the AI response.",
+              }
+            : m
+        )
+      );
     } finally {
       setIsLoading(false);
     }
