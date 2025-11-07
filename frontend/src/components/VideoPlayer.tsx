@@ -113,14 +113,14 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
     <div className="glass-card overflow-hidden">
       <div className="relative bg-gradient-to-br from-primary/5 to-secondary/5 aspect-video">
         {/* Hamburger Menu */}
-        <Button
+        {/* <Button
           variant="ghost"
           size="icon"
           onClick={onMenuToggle}
           className="absolute top-1/2 -translate-y-1/2 right-4 z-10 bg-black/40 hover:bg-black/60 text-white"
         >
           <Menu className="w-5 h-5" />
-        </Button>
+        </Button> */}
 
         {videoId ? (
           <div id="youtube-player" className="w-full h-full" />
