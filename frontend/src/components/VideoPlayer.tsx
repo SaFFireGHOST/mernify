@@ -143,34 +143,28 @@ const VideoPlayer = ({
           playerVars: { modestbranding: 1, rel: 0 },
           events: {
             onReady: () => {
+              if (intervalRef.current) clearInterval(intervalRef.current);
+              intervalRef.current = setInterval(() => {
+                if (playerRef.current && onTimeUpdate) {
+                  onTimeUpdate(playerRef.current.getCurrentTime());
+                }
+              }, 1000);
               exposeControls();
             },
-            // inside VideoPlayer onStateChange (YouTube branch)
             onStateChange: (e: any) => {
               if (suppressLocalRef.current) return;
               const t = playerRef.current?.getCurrentTime?.() ?? 0;
-
               if (e.data === window.YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
-                // start ticking only while playing
-                if (intervalRef.current) clearInterval(intervalRef.current);
-                if (onTimeUpdate) {
-                  intervalRef.current = setInterval(() => {
-                    if (playerRef.current) onTimeUpdate(playerRef.current.getCurrentTime());
-                  }, 1000);
-                }
                 onLocalPlay?.(t);
-              } else if (e.data === window.YT.PlayerState.PAUSED || e.data === window.YT.PlayerState.ENDED) {
+              } else if (
+                e.data === window.YT.PlayerState.PAUSED ||
+                e.data === window.YT.PlayerState.ENDED
+              ) {
                 setIsPlaying(false);
-                // stop ticking when not playing
-                if (intervalRef.current) {
-                  clearInterval(intervalRef.current);
-                  intervalRef.current = null;
-                }
                 onLocalPause?.(t);
               }
             },
-
             onError: (e: any) => console.warn("YouTube error", e?.data),
           },
         });
@@ -210,7 +204,7 @@ const VideoPlayer = ({
       if (playerRef.current?.destroy) {
         try {
           playerRef.current.destroy();
-        } catch { }
+        } catch {}
         playerRef.current = null;
       }
     };
@@ -271,7 +265,7 @@ const VideoPlayer = ({
       try {
         // YouTube volume: 0..100
         playerRef.current.setVolume?.(value[0]);
-      } catch { }
+      } catch {}
     }
   };
 
