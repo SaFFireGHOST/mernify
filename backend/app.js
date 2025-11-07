@@ -2,9 +2,20 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
+const roomsRoutes = require('./routes/rooms');
+const roomPlaybackRoutes = require('./routes/roomPlayback');
+
+console.log('SUPABASE_URL present:', !!process.env.SUPABASE_URL);
+console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.log('SERVICE_ROLE_KEY prefix:', process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 8));
+}
+
 
 const app = express();
 app.use(express.json());
+
+app.use('/api/rooms', roomsRoutes);
 
 // Connect to MongoDB
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/simple_auth_db';
@@ -15,6 +26,7 @@ mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/room-playback', roomPlaybackRoutes);
 
 // Example protected route (test)
 const { verifyToken } = require('./middleware/auth');
