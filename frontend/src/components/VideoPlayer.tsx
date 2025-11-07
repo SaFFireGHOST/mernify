@@ -3,13 +3,29 @@ import { Play, Pause, Volume2, VolumeX, Maximize, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 
+interface VideoPlayerControls {
+  seekTo: (seconds: number) => void;
+  getCurrentTime: () => number;
+  setPlaying: (play: boolean) => void;
+  isReady?: () => boolean;
+}
+
 interface VideoPlayerProps {
   onMenuToggle: () => void;
   youtubeUrl?: string;
-  onTimeUpdate?: (time: number) => void;
-  seekToTime?: number | null;
-  onSeekComplete?: () => void;
+  onTimeUpdate?: (time: number) => void;         // already present
+  seekToTime?: number | null;                    // already present
+  onSeekComplete?: () => void;                   // already present
+
+  /* NEW: register controls so parent can call seek/getTime/setPlaying */
+  registerControls?: (controls: VideoPlayerControls) => void;
+
+  /* NEW: notify parent about local user interactions (immediate events) */
+  onLocalPlay?: (currentTime: number) => void;
+  onLocalPause?: (currentTime: number) => void;
+  onLocalSeek?: (seekToTime: number) => void;
 }
+
 
 declare global {
   interface Window {
@@ -18,7 +34,8 @@ declare global {
   }
 }
 
-const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSeekComplete }: VideoPlayerProps) => {
+const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSeekComplete, registerControls, onLocalPlay, onLocalPause,
+  onLocalSeek }: VideoPlayerProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -31,8 +48,21 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
+        onLocalPause?.(videoRef.current.currentTime);
       } else {
         videoRef.current.play();
+        onLocalPlay?.(videoRef.current.currentTime);
+      }
+      setIsPlaying(!isPlaying);
+    } else if (playerRef.current) {
+      // YouTube: use API
+      const state = playerRef.current.getPlayerState?.(); // optional
+      if (isPlaying) {
+        playerRef.current.pauseVideo?.();
+        onLocalPause?.(playerRef.current.getCurrentTime());
+      } else {
+        playerRef.current.playVideo?.();
+        onLocalPlay?.(playerRef.current.getCurrentTime());
       }
       setIsPlaying(!isPlaying);
     }
@@ -45,10 +75,17 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
     }
   };
 
+  // When user drags the slider to seek (HTML5)
   const handleProgressChange = (value: number[]) => {
     setProgress(value[0]);
     if (videoRef.current) {
-      videoRef.current.currentTime = (value[0] / 100) * videoRef.current.duration;
+      const newTime = (value[0] / 100) * videoRef.current.duration;
+      videoRef.current.currentTime = newTime;
+      onLocalSeek?.(newTime);
+    } else if (playerRef.current && playerRef.current.seekTo) {
+      const newTime = (value[0] / 100) * (playerRef.current.getDuration?.() || 0);
+      playerRef.current.seekTo(newTime, true);
+      onLocalSeek?.(newTime);
     }
   };
 
@@ -65,6 +102,47 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
 
   const videoId = youtubeUrl ? getYoutubeVideoId(youtubeUrl) : null;
 
+
+  // expose control API to parent
+  useEffect(() => {
+    const controls: VideoPlayerControls = {
+      seekTo: (t: number) => {
+        if (playerRef.current && playerRef.current.seekTo) {
+          // YouTube
+          playerRef.current.seekTo(t, true);
+        } else if (videoRef.current) {
+          // HTML5
+          videoRef.current.currentTime = t;
+        }
+      },
+      getCurrentTime: () => {
+        if (playerRef.current && playerRef.current.getCurrentTime) {
+          return playerRef.current.getCurrentTime();
+        }
+        if (videoRef.current) return videoRef.current.currentTime || 0;
+        return 0;
+      },
+      setPlaying: (play: boolean) => {
+        if (playerRef.current) {
+          // YouTube Player API uses playVideo / pauseVideo
+          if (play) playerRef.current.playVideo?.() || playerRef.current.play?.();
+          else playerRef.current.pauseVideo?.() || playerRef.current.pause?.();
+          setIsPlaying(Boolean(play));
+        } else if (videoRef.current) {
+          if (play) videoRef.current.play();
+          else videoRef.current.pause();
+          setIsPlaying(Boolean(play));
+        }
+      },
+      isReady: () => Boolean(playerRef.current || videoRef.current),
+    };
+
+    // call once when available
+    registerControls?.(controls);
+    // no cleanup necessary here, parent can re-register if needed
+  }, [playerRef.current, videoRef.current, registerControls]);
+
+
   // Load YouTube IFrame API
   useEffect(() => {
     if (!videoId) return;
@@ -79,17 +157,27 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
         videoId: videoId,
         events: {
           onReady: () => {
-            // Start tracking time
+            // Start tracking time as before...
             intervalRef.current = setInterval(() => {
               if (playerRef.current && onTimeUpdate) {
                 const currentTime = playerRef.current.getCurrentTime();
                 onTimeUpdate(currentTime);
               }
             }, 1000);
+            // Notify controls ready (registerControls effect will also run)
           },
+          onStateChange: (e: any) => {
+            // YouTube states: 1 = playing, 2 = paused, 0 = ended
+            const state = e.data;
+            const currentTime = playerRef.current.getCurrentTime?.() ?? 0;
+            if (state === 1) onLocalPlay?.(currentTime);
+            if (state === 2) onLocalPause?.(currentTime);
+            // no direct seek event from state change; YouTube has onSeek? not directly — parent uses registerControls.seekTo to issue seeks
+          }
         },
       });
     };
+
 
     return () => {
       if (intervalRef.current) {
@@ -106,21 +194,16 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
     if (seekToTime !== null && playerRef.current && playerRef.current.seekTo) {
       playerRef.current.seekTo(seekToTime, true);
       onSeekComplete?.();
+    } else if (seekToTime !== null && videoRef.current) {
+      videoRef.current.currentTime = seekToTime;
+      onSeekComplete?.();
     }
   }, [seekToTime, onSeekComplete]);
+
 
   return (
     <div className="glass-card overflow-hidden">
       <div className="relative bg-gradient-to-br from-primary/5 to-secondary/5 aspect-video">
-        {/* Hamburger Menu */}
-        {/* <Button
-          variant="ghost"
-          size="icon"
-          onClick={onMenuToggle}
-          className="absolute top-1/2 -translate-y-1/2 right-4 z-10 bg-black/40 hover:bg-black/60 text-white"
-        >
-          <Menu className="w-5 h-5" />
-        </Button> */}
 
         {videoId ? (
           <div id="youtube-player" className="w-full h-full" />
@@ -139,7 +222,7 @@ const VideoPlayer = ({ onMenuToggle, youtubeUrl, onTimeUpdate, seekToTime, onSee
 
         {/* Play overlay when paused - only for non-YouTube videos */}
         {!isPlaying && !videoId && (
-          <div 
+          <div
             className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer"
             onClick={togglePlay}
           >

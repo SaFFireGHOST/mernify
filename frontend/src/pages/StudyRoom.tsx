@@ -1,8 +1,11 @@
-import { useState } from "react";
+// StudyRoom.tsx (modified)
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
-import VideoPlayer from "@/components/VideoPlayer";
+// replace VideoPlayer import with RoomVideoPlayer
+// import VideoPlayer from "@/components/VideoPlayer";
+import RoomVideoPlayer from "@/components/RoomVideoPlayer";
 import CollaborationPanel from "@/components/CollaborationPanel";
 import PauseOverlay from "@/components/PauseOverlay";
 import { Button } from "@/components/ui/button";
@@ -11,6 +14,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { useAuth } from "@/hooks/use-auth"; // add this import to get current user
+import useRoomRealtime from "@/hooks/useRoomRealtime";
 
 const youtubeUrlSchema = z.string().trim().regex(
   /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/)[\w-]{11}(\S*)?$/,
@@ -20,12 +25,33 @@ const youtubeUrlSchema = z.string().trim().regex(
 const StudyRoom = () => {
   const { roomId } = useParams();
   const { toast } = useToast();
+  const { user } = useAuth(); // get user (so we can tell server who updated playback)
   const [showPauseMenu, setShowPauseMenu] = useState(false);
   const [activeTab, setActiveTab] = useState<"comments" | "chat" | "ai" | "whiteboard">("comments");
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [urlInput, setUrlInput] = useState("");
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [seekToTime, setSeekToTime] = useState<number | null>(null);
+  const { room: realtimeRoom, loading: roomLoading, error: roomError } = useRoomRealtime(roomId);
+
+  // update youtubeUrl when rooms.video_url changes
+  useEffect(() => {
+    if (!realtimeRoom) {
+      // optional: clear youtubeUrl if room deleted / no video
+      // setYoutubeUrl("");
+      return;
+    }
+    const v = realtimeRoom.video_url;
+    if (v && String(v).trim().length > 0) {
+      const trimmed = String(v).trim();
+      // only update if changed (avoid useless re-renders)
+      setYoutubeUrl((prev) => (prev !== trimmed ? trimmed : prev));
+      setUrlInput(trimmed); // optional: keep input in sync
+    } else {
+      // if you want to clear when db has null:
+      // setYoutubeUrl("");
+    }
+  }, [realtimeRoom?.video_url]);
 
   const handleMenuToggle = () => {
     setShowPauseMenu(!showPauseMenu);
@@ -46,13 +72,44 @@ const StudyRoom = () => {
     setShowPauseMenu(false);
   };
 
-  const handleLoadVideo = () => {
+  // POST/ PATCH room video_url to backend and update local state
+  const handleLoadVideo = async () => {
     try {
       youtubeUrlSchema.parse(urlInput);
-      setYoutubeUrl(urlInput);
+
+      if (!roomId) {
+        toast({ title: 'Missing room id', description: 'Cannot associate video with room', variant: 'destructive' });
+        return;
+      }
+
+      // call backend to update room.video_url
+      const token = localStorage.getItem('token'); // or pull from context if you have it
+      const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ video_url: urlInput.trim() }),
+      });
+
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        const errMsg = body?.error || body?.message || `Failed to update room (${res.status})`;
+        toast({ title: 'Could not load video', description: errMsg, variant: 'destructive' });
+        return;
+      }
+
+      // success: backend returns updated room (room.video_url) — set state so player loads it
+      const updatedRoom = body?.room;
+      setYoutubeUrl(updatedRoom?.video_url ?? urlInput.trim());
+
+      // also reset playback seek (optional) — when you change video, it's sensible to reset playback
+      setSeekToTime(0);
+
       toast({
-        title: "Video loaded",
-        description: "YouTube video has been loaded successfully",
+        title: 'Video loaded',
+        description: 'YouTube video has been saved to this room and loaded.',
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -61,14 +118,17 @@ const StudyRoom = () => {
           description: error.errors[0].message,
           variant: "destructive",
         });
+        return;
       }
+      console.error("handleLoadVideo error", error);
+      toast({ title: "Error", description: "Something went wrong", variant: "destructive" });
     }
   };
 
   return (
     <div className="min-h-screen">
       {/* Header */}
-      <motion.header 
+      <motion.header
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         className="glass border-b border-border/50"
@@ -90,20 +150,24 @@ const StudyRoom = () => {
         <ResizablePanelGroup direction="horizontal" className="gap-6">
           {/* Video Player Section */}
           <ResizablePanel defaultSize={65} minSize={30}>
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               className="h-full flex flex-col gap-4"
             >
               <div className="relative">
-                <VideoPlayer 
-                  onMenuToggle={handleMenuToggle} 
-                  youtubeUrl={youtubeUrl}
+                {/* --- REPLACED: use RoomVideoPlayer here --- */}
+                <RoomVideoPlayer
+                  roomId={roomId}
+                  youtubeUrl={youtubeUrl}                // <- pass the live value (not only initial)
+                  userId={user?.id ?? null}
+                  onMenuToggle={handleMenuToggle}
                   onTimeUpdate={setCurrentVideoTime}
                   seekToTime={seekToTime}
                   onSeekComplete={() => setSeekToTime(null)}
                 />
-                
+
+
                 <AnimatePresence>
                   {showPauseMenu && (
                     <PauseOverlay
@@ -147,8 +211,8 @@ const StudyRoom = () => {
               animate={{ opacity: 1, x: 0 }}
               className="h-full"
             >
-              <CollaborationPanel 
-                activeTab={activeTab} 
+              <CollaborationPanel
+                activeTab={activeTab}
                 onTabChange={setActiveTab}
                 currentVideoTime={currentVideoTime}
                 onJumpToTime={setSeekToTime}
