@@ -36,15 +36,26 @@ export default function Whiteboard() {
   const channelRef = useRef(null);
   const currentPathRef = useRef([]);
   // at top with other refs
-  const strokesStoreRef = useRef<Array<{ points: any[]; color: string }>>([]);
+  // const strokesStoreRef = useRef<Array<{ points: any[]; color: string }>>([]);
+
+  const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
+  const [penSize, setPenSize] = useState(5);
+  const [eraserSize, setEraserSize] = useState(18); // tweak to taste
+
+  type StrokePoint = { type: 'start' | 'move'; x: number; y: number };
+  type StoredStroke = { points: StrokePoint[]; color: string; tool?: 'pen' | 'eraser'; size?: number };
+
+  const strokesStoreRef = useRef<StoredStroke[]>([]);
+
 
   function repaintAll() {
     const ctx = contextRef.current;
     if (!ctx) return;
     for (const s of strokesStoreRef.current) {
-      drawStroke(s.points, s.color);
+      drawStroke(s.points, s.color, s.tool ?? 'pen', s.size);
     }
   }
+
 
 
   // Dynamic channel name based on roomId
@@ -110,30 +121,43 @@ export default function Whiteboard() {
   }, [currentColor]);
 
   // Function to draw a stroke (used for both realtime and initial load)
-  const drawStroke = (points, color) => {
-    const context = contextRef.current;
-    if (!context || points.length === 0) return;
+  const drawStroke = (points: StrokePoint[], color: string, tool: 'pen' | 'eraser' = 'pen', size?: number) => {
+    const ctx = contextRef.current;
+    if (!ctx || points.length === 0) return;
 
-    const currentStrokeStyle = context.strokeStyle;
-    context.strokeStyle = color;
+    // save current settings
+    const prevComposite = ctx.globalCompositeOperation;
+    const prevStroke = ctx.strokeStyle;
+    const prevWidth = ctx.lineWidth;
+
+    // apply tool
+    if (tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = size ?? eraserSize;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size ?? penSize;
+    }
 
     let isNewPath = true;
-
-    for (let i = 0; i < points.length; i++) {
-      const point = points[i];
-
-      if (point.type === 'start' || isNewPath) {
-        context.beginPath();
-        context.moveTo(point.x, point.y);
+    for (const p of points) {
+      if (p.type === 'start' || isNewPath) {
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
         isNewPath = false;
-      } else if (point.type === 'move') {
-        context.lineTo(point.x, point.y);
-        context.stroke();
+      } else if (p.type === 'move') {
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
       }
     }
 
-    context.strokeStyle = currentStrokeStyle;
+    // restore
+    ctx.globalCompositeOperation = prevComposite;
+    ctx.strokeStyle = prevStroke as string;
+    ctx.lineWidth = prevWidth;
   };
+
 
   // Function to send batched points
   const sendBatchedPoints = () => {
@@ -145,12 +169,15 @@ export default function Whiteboard() {
       payload: {
         userId: userId.current,
         points: [...pointsBuffer.current],
-        color: currentColor
+        color: currentColor,
+        tool: currentTool,
+        size: currentTool === 'eraser' ? eraserSize : penSize,
       }
     });
 
     pointsBuffer.current = [];
   };
+
 
   // Set up Supabase channel and load initial strokes from backend
   useEffect(() => {
@@ -177,33 +204,43 @@ export default function Whiteboard() {
 
     channel.on('broadcast', { event: 'draw_batch' }, (payload) => {
       if (payload.payload.userId === userId.current) return;
-
-      const { points, color } = payload.payload;
-      drawStroke(points, color);
-      strokesStoreRef.current.push({ points, color });
+      const { points, color, tool = 'pen', size } = payload.payload;
+      drawStroke(points, color, tool, size);
+      strokesStoreRef.current.push({ points, color, tool, size });
     });
 
     channel.on('broadcast', { event: 'draw' }, (payload) => {
       if (payload.payload.userId === userId.current) return;
+      const { x, y, type, color, tool = 'pen', size } = payload.payload;
+      const ctx = contextRef.current;
+      if (!ctx) return;
 
-      const { x, y, type, color } = payload.payload;
-      const context = contextRef.current;
+      const prevComposite = ctx.globalCompositeOperation;
+      const prevStroke = ctx.strokeStyle;
+      const prevWidth = ctx.lineWidth;
 
-      if (!context) return;
-
-      const currentStrokeStyle = context.strokeStyle;
-      context.strokeStyle = color;
-
-      if (type === 'start') {
-        context.beginPath();
-        context.moveTo(x, y);
-      } else if (type === 'move') {
-        context.lineTo(x, y);
-        context.stroke();
+      if (tool === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = size ?? eraserSize;
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = size ?? penSize;
       }
 
-      context.strokeStyle = currentStrokeStyle;
+      if (type === 'start') {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      } else if (type === 'move') {
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      }
+
+      ctx.globalCompositeOperation = prevComposite;
+      ctx.strokeStyle = prevStroke as string;
+      ctx.lineWidth = prevWidth;
     });
+
 
     channel.on('broadcast', { event: 'clear' }, () => {
       const canvas = canvasRef.current;
@@ -230,9 +267,16 @@ export default function Whiteboard() {
           if (!response.ok) throw new Error('Failed to fetch strokes');
           const data = await response.json();
           data.forEach(stroke => {
-            drawStroke(stroke.strokes, stroke.color);
-            strokesStoreRef.current.push({ points: stroke.strokes, color: stroke.color });
+            // stroke.tool / stroke.size might be missing for old data
+            drawStroke(stroke.strokes, stroke.color, stroke.tool ?? 'pen', stroke.size);
+            strokesStoreRef.current.push({
+              points: stroke.strokes,
+              color: stroke.color,
+              tool: stroke.tool ?? 'pen',
+              size: stroke.size,
+            });
           });
+
 
           // --- FIX APPLIED HERE ---
           // Set current color to the last stroke color if strokes were loaded.
@@ -254,103 +298,135 @@ export default function Whiteboard() {
   // Drawing handlers (omitted for brevity, they are unchanged from previous working version)
   const startDrawing = ({ nativeEvent }) => {
     const { offsetX, offsetY } = nativeEvent;
+    const ctx = contextRef.current;
+    if (!ctx) return;
 
-    // Start a new path in the canvas
-    contextRef.current.strokeStyle = currentColor;
-    contextRef.current.beginPath();
-    contextRef.current.moveTo(offsetX, offsetY);
-    setIsDrawing(true);
-
-    // Reset the current path
-    currentPathRef.current = [{ type: 'start', x: offsetX, y: offsetY }];
-
-    // Add to buffer for batched sending with type information
-    pointsBuffer.current.push({ type: 'start', x: offsetX, y: offsetY });
-
-    // Start the batch timer if not already started
-    if (!batchTimerRef.current) {
-      batchTimerRef.current = setInterval(sendBatchedPoints, 10); // Send every 10ms for more frequent updates
+    // apply tool for local drawing
+    if (currentTool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = eraserSize;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = currentColor;
+      ctx.lineWidth = penSize;
     }
 
-    // For backward compatibility, also send individual start event
+    ctx.beginPath();
+    ctx.moveTo(offsetX, offsetY);
+    setIsDrawing(true);
+
+    currentPathRef.current = [{ type: 'start', x: offsetX, y: offsetY }];
+    pointsBuffer.current.push({ type: 'start', x: offsetX, y: offsetY });
+
+    if (!batchTimerRef.current) {
+      batchTimerRef.current = setInterval(sendBatchedPoints, 10);
+    }
+
     channelRef.current.send({
       type: 'broadcast',
       event: 'draw',
       payload: {
         userId: userId.current,
         type: 'start',
-        x: offsetX,
-        y: offsetY,
-        color: currentColor
+        x: offsetX, y: offsetY,
+        color: currentColor,
+        tool: currentTool,                        // 👈
+        size: currentTool === 'eraser' ? eraserSize : penSize,
       }
     });
   };
 
   const draw = ({ nativeEvent }) => {
     if (!isDrawing) return;
-
     const { offsetX, offsetY } = nativeEvent;
+    const ctx = contextRef.current;
+    if (!ctx) return;
 
-    // Draw on local canvas
-    contextRef.current.lineTo(offsetX, offsetY);
-    contextRef.current.stroke();
+    // ensure tool settings persist mid-stroke (safe)
+    if (currentTool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = eraserSize;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = currentColor;
+      ctx.lineWidth = penSize;
+    }
 
-    // Add to buffer for batched sending with type information
+    ctx.lineTo(offsetX, offsetY);
+    ctx.stroke();
+
     pointsBuffer.current.push({ type: 'move', x: offsetX, y: offsetY });
-
-    // For backward compatibility, also send individual move event
     channelRef.current.send({
       type: 'broadcast',
       event: 'draw',
       payload: {
         userId: userId.current,
         type: 'move',
-        x: offsetX,
-        y: offsetY,
-        color: currentColor
+        x: offsetX, y: offsetY,
+        color: currentColor,
+        tool: currentTool,                        // 👈
+        size: currentTool === 'eraser' ? eraserSize : penSize,
       }
     });
 
-    // Add to current path
     currentPathRef.current.push({ type: 'move', x: offsetX, y: offsetY });
   };
 
   const stopDrawing = async () => {
-    contextRef.current.closePath();
+    const ctx = contextRef.current;
+    if (ctx) ctx.closePath();
     setIsDrawing(false);
 
-    // Send any remaining points
+    // flush any remaining batched points
     sendBatchedPoints();
 
-    // Clear the batch timer
     if (batchTimerRef.current) {
       clearInterval(batchTimerRef.current);
       batchTimerRef.current = null;
     }
 
-    // Persist the stroke to backend API if there's a path
+    // --------- PERSIST TO BACKEND (ADD THIS) ----------
     if (currentPathRef.current.length > 0) {
-      strokesStoreRef.current.push({ points: [...currentPathRef.current], color: currentColor });
+      // snapshot before we clear
+      const path = [...currentPathRef.current];
+      const stroke = {
+        room_id: Number(roomId), // or String(roomId) if your model uses string
+        strokes: path,           // [{type:'start'|'move', x, y}, ...]
+        color: currentColor,
+        tool: currentTool,                               // 'pen' | 'eraser'
+        size: currentTool === 'eraser' ? eraserSize : penSize,
+        // created_by: session?.user?.id, // if you have auth
+      };
+
+      // keep local store in sync so repaint/save works instantly
+      strokesStoreRef.current.push({
+        points: path, color: currentColor, tool: currentTool, size: stroke.size
+      });
+
       try {
-        const response = await fetch(`${API_BASE_URL}/strokes`, {
+        const resp = await fetch(`${API_BASE_URL}/strokes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            room_id: parseInt(roomId), // Ensure bigint as number
-            strokes: currentPathRef.current,
-            color: currentColor,
-            // created_by: session?.user?.id // Add if using auth
-          })
+          body: JSON.stringify(stroke),
         });
-        if (!response.ok) throw new Error('Failed to save stroke');
-      } catch (error) {
-        console.error('Error saving stroke:', error);
+        if (!resp.ok) {
+          const e = await resp.text().catch(() => '');
+          console.error('Failed to save stroke:', resp.status, e);
+        }
+      } catch (err) {
+        console.error('POST /strokes error:', err);
       }
     }
+    // ---------------------------------------------------
 
-    // Reset current path
+    // reset for next stroke
     currentPathRef.current = [];
+
+    // return to normal drawing mode after an eraser stroke
+    if (ctx) ctx.globalCompositeOperation = 'source-over';
   };
+
+
 
   const clearCanvas = async () => {
     const canvas = canvasRef.current;
@@ -414,44 +490,104 @@ export default function Whiteboard() {
 
   return (
     <div className="flex flex-col h-screen bg-neutral-900 text-white antialiased relative">
-      {/* Toolbar - Positioned at top-right, using bg-neutral-800/70 for a nice visual */}
-      <div className="flex items-center gap-4 absolute top-4 right-4 z-10 p-2 bg-neutral-800/70 backdrop-blur-sm rounded-lg shadow-xl">
-
-        {/* Clear Canvas Button (Left of Color Palette) */}
-        <button
-          onClick={clearCanvas}
-          className="p-2 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-full transition-colors"
-          title="Clear Canvas"
+      {/* Toolbar - Positioned at top-right */}
+      {/* Toolbar – responsive */}
+      <div
+        className="
+    absolute
+    top-2 left-1/2 -translate-x-1/2
+    md:top-4 md:right-4 md:left-auto md:translate-x-0
+    z-10
+  "
+      >
+        <div
+          className="
+      flex flex-wrap md:flex-nowrap items-center
+      gap-2 md:gap-4
+      p-2 md:p-3
+      bg-neutral-800/70 backdrop-blur-sm rounded-lg shadow-xl
+      max-w-[calc(100vw-1rem)]  /* prevent overflow off-screen on mobile */
+      overflow-x-auto            /* allow sideways scroll if needed */
+    "
         >
-          <Trash2 strokeWidth={1.5} size={16} />
-        </button>
+          {/* Tools */}
+          <button
+            onClick={() => setCurrentTool('pen')}
+            className={`px-2 py-1 md:px-3 md:py-1.5 rounded text-sm md:text-base ${currentTool === 'pen'
+                ? 'bg-neutral-700 text-white'
+                : 'text-neutral-300 hover:bg-neutral-700'
+              }`}
+            title="Pen"
+          >
+            Pen
+          </button>
 
-        {/* Color Palette (Center) */}
-        <div className="flex gap-2">
-          {colors.map((color) => (
-            <div
-              key={color}
-              className={`w-6 h-6 rounded-full cursor-pointer border-2 ${color === currentColor ? 'border-neutral-300' : 'border-transparent'
-                } hover:scale-110 transition-transform`}
-              style={{ backgroundColor: color }}
-              onClick={() => selectColor(color)}
-              title={color}
+          <button
+            onClick={() => setCurrentTool('eraser')}
+            className={`px-2 py-1 md:px-3 md:py-1.5 rounded text-sm md:text-base ${currentTool === 'eraser'
+                ? 'bg-neutral-700 text-white'
+                : 'text-neutral-300 hover:bg-neutral-700'
+              }`}
+            title="Eraser"
+          >
+            Eraser
+          </button>
+
+          {/* Size slider */}
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <span className="text-xs text-neutral-400 whitespace-nowrap">Size</span>
+            <input
+              type="range"
+              min={1}
+              max={40}
+              value={currentTool === 'eraser' ? eraserSize : penSize}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (currentTool === 'eraser') setEraserSize(v);
+                else setPenSize(v);
+              }}
+              className="accent-neutral-300 w-28 md:w-40"
             />
-          ))}
+          </div>
+
+          {/* Clear */}
+          <button
+            onClick={clearCanvas}
+            className="p-2 md:p-2.5 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-full transition-colors shrink-0"
+            title="Clear Canvas"
+          >
+            <Trash2 strokeWidth={1.5} size={16} />
+          </button>
+
+          {/* Colors */}
+          <div className="flex items-center gap-2 overflow-x-auto pr-1">
+            {colors.map((color) => (
+              <div
+                key={color}
+                className={`w-6 h-6 md:w-7 md:h-7 rounded-full cursor-pointer border-2 ${color === currentColor ? 'border-neutral-300' : 'border-transparent'
+                  } hover:scale-110 transition-transform shrink-0`}
+                style={{ backgroundColor: color }}
+                onClick={() => {
+                  setCurrentTool('pen'); // ensure pen when picking a color
+                  selectColor(color);
+                }}
+                title={color}
+              />
+            ))}
+          </div>
+
+          {/* Save */}
+          <button
+            onClick={saveImage}
+            className="p-2 md:p-2.5 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded-full transition-colors shrink-0"
+            title="Save Image (PNG)"
+          >
+            <Save strokeWidth={1.5} size={16} />
+          </button>
         </div>
-
-        {/* Save Image Button (Right of Color Palette) */}
-        <button
-          onClick={saveImage}
-          className="p-2 text-neutral-400 hover:bg-neutral-700 hover:text-white rounded-full transition-colors"
-          title="Save Image (PNG)"
-        >
-          <Save strokeWidth={1.5} size={16} />
-        </button>
-
-        {/* Active Users (Removed section remains commented out) */}
-        {/* ... */}
       </div>
+
+
 
       {/* Main content (Canvas) */}
       <div className="flex-1 h-full overflow-hidden">
