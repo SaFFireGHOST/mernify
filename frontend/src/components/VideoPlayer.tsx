@@ -8,6 +8,7 @@ interface VideoPlayerControls {
   getCurrentTime: () => number;
   setPlaying: (play: boolean) => void;
   isReady?: () => boolean;
+  getPlayerState?: () => number; // Added for checking playing state
 }
 
 interface VideoPlayerProps {
@@ -90,7 +91,7 @@ const VideoPlayer = ({
   const videoId = youtubeUrl ? getYoutubeVideoId(youtubeUrl) : null;
 
   /* -------------------------
-     3) Expose controls to parent
+     3) Expose controls to parent (added getPlayerState for sync)
   -------------------------- */
   const exposeControls = useCallback(() => {
     const controls: VideoPlayerControls = {
@@ -117,6 +118,7 @@ const VideoPlayer = ({
         setTimeout(() => (suppressLocalRef.current = false), 500);
       },
       isReady: () => Boolean(playerRef.current || html5Ref.current),
+      getPlayerState: () => playerRef.current?.getPlayerState?.() ?? (html5Ref.current?.paused ? 2 : 1), // 1=playing, 2=paused
     };
     registerControls?.(controls);
   }, [registerControls]);

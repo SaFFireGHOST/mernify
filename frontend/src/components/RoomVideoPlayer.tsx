@@ -1,11 +1,12 @@
 // src/components/RoomVideoPlayer.tsx
 import React, { useRef, useCallback, useEffect } from "react";
 import VideoPlayer from "@/components/VideoPlayer";
-import useRoomPlayback from "@/hooks/useRoomPlayback";
-import type { RoomRow } from "@/hooks/useRoomRealtime";
+import io from "socket.io-client"; // Added for Socket.io
+import type { RoomRow } from "@/hooks/useRoomRealtime"; // Keep if needed, else remove
 
 const SEEK_THRESHOLD = 0.6; // seconds
 const UPDATE_THROTTLE_MS = 1500; // ms
+const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:4000"; // Adjust as needed
 
 type Props = {
     roomId: number | string;
@@ -33,104 +34,101 @@ export default function RoomVideoPlayer({
     const lastSentRef = useRef<number>(0);
     const pendingSeekRef = useRef<number | null>(null);
     const playerControlRef = useRef<any | null>(null);
+    const socketRef = useRef<any>(null); // Socket.io ref
 
-    // subscribe to room_playback updates (your hook) so we can sync play/pause/time
-    const { latest, sendLocalUpdate } = useRoomPlayback(roomId, (row: any) => {
-        // remote update handler (same as your previous code)
-        if (!row) return;
-        const updatedAtMs = new Date(row.updated_at).getTime();
-        const nowMs = Date.now();
-        const elapsedSec = row.is_playing ? (nowMs - updatedAtMs) / 1000 : 0;
-        const expectedTime = row.playback_time + elapsedSec;
+    // Connect to Socket.io and handle remote updates
+    useEffect(() => {
+        socketRef.current = io(SOCKET_URL);
 
-        const getCurrentTime = playerControlRef.current?.getCurrentTime;
-        const seekTo = playerControlRef.current?.seekTo;
-        const setPlaying = playerControlRef.current?.setPlaying;
+        socketRef.current.emit("join-room", roomId);
 
-        const localTime = typeof getCurrentTime === "function" ? getCurrentTime() : null;
-        if (localTime !== null) {
-            const diff = Math.abs(localTime - expectedTime);
-            if (diff > SEEK_THRESHOLD && typeof seekTo === "function") {
-                seekTo(expectedTime);
+        // Listen for remote playback updates
+        socketRef.current.on("playback-update", (update: any) => {
+            const { is_playing, playback_time, video_url } = update;
+            const expectedTime = playback_time; // Simplified; add elapsed time calc if needed
+
+            const getCurrentTime = playerControlRef.current?.getCurrentTime;
+            const seekTo = playerControlRef.current?.seekTo;
+            const setPlaying = playerControlRef.current?.setPlaying;
+
+            const localTime = typeof getCurrentTime === "function" ? getCurrentTime() : null;
+            if (localTime !== null) {
+                const diff = Math.abs(localTime - expectedTime);
+                if (diff > SEEK_THRESHOLD && typeof seekTo === "function") {
+                    seekTo(expectedTime);
+                }
+            } else {
+                pendingSeekRef.current = expectedTime;
             }
-        } else {
-            pendingSeekRef.current = expectedTime;
-        }
 
-        if (typeof setPlaying === "function") setPlaying(Boolean(row.is_playing));
-    });
+            if (typeof setPlaying === "function") setPlaying(!!is_playing);
+        });
 
-    console.log({
-        propFromStudyRoom: youtubeUrl,
-        fromPlaybackHook: latest?.video_url,
-    });
+        // Handle state requests from new joiners
+        socketRef.current.on("request-state", () => {
+            const currentTime = playerControlRef.current?.getCurrentTime() ?? 0;
+            const isPlaying = playerControlRef.current?.getPlayerState?.() === 1; // 1 = playing for YT
+            socketRef.current.emit("send-state", {
+                roomId,
+                video_url: effectiveUrl ?? null,
+                is_playing: isPlaying,
+                playback_time: currentTime,
+            });
+        });
 
-    // Determine the effective URL to give to VideoPlayer:
-    // priority: explicit youtubeUrl prop > initialYoutubeUrl prop > latest.room_playback.video_url
-    // TO:
-    const effectiveUrl = (youtubeUrl || initialYoutubeUrl || latest?.video_url) ?? undefined;
+        return () => {
+            socketRef.current.disconnect();
+        };
+    }, [roomId]);
 
-    // debug log to help you see why iframe shows / doesn't show
+    // Determine the effective URL to give to VideoPlayer
+    const effectiveUrl = (youtubeUrl || initialYoutubeUrl) ?? undefined; // Removed dependency on hook's latest
+
     useEffect(() => {
         console.log(`[RoomVideoPlayer] room=${roomId} effectiveUrl=`, effectiveUrl);
     }, [roomId, effectiveUrl]);
 
     // Periodic time update from VideoPlayer
     const handleLocalTimeUpdate = useCallback(
-        async (time: number) => {
+        (time: number) => {
             onTimeUpdate?.(time);
             const now = Date.now();
             if (now - lastSentRef.current < UPDATE_THROTTLE_MS) return;
             lastSentRef.current = now;
 
-            try {
-                await sendLocalUpdate({
-                    video_url: effectiveUrl ?? null,
-                    is_playing: true,
-                    playback_time: time,
-                    client_ts: Date.now(),
-                    updated_by: userId,
-                });
-            } catch (e) {
-                console.error("sendLocalUpdate error", e);
-            }
+            socketRef.current.emit("playback-update", {
+                roomId,
+                video_url: effectiveUrl ?? null,
+                is_playing: true,
+                playback_time: time,
+            });
         },
-        [onTimeUpdate, sendLocalUpdate, effectiveUrl, userId]
+        [onTimeUpdate, effectiveUrl, roomId]
     );
 
     const handleLocalPlayPause = useCallback(
-        async (isPlaying: boolean, currentTime: number) => {
-            try {
-                await sendLocalUpdate({
-                    video_url: effectiveUrl ?? null,
-                    is_playing: Boolean(isPlaying),
-                    playback_time: currentTime,
-                    client_ts: Date.now(),
-                    updated_by: userId,
-                });
-            } catch (e) {
-                console.error("sendLocalUpdate play/pause error", e);
-            }
+        (isPlaying: boolean, currentTime: number) => {
+            socketRef.current.emit("playback-update", {
+                roomId,
+                video_url: effectiveUrl ?? null,
+                is_playing: isPlaying,
+                playback_time: currentTime,
+            });
         },
-        [sendLocalUpdate, effectiveUrl, userId]
+        [effectiveUrl, roomId]
     );
 
     const handleLocalSeek = useCallback(
-        async (seekTo: number) => {
+        (seekTo: number) => {
             onTimeUpdate?.(seekTo);
-            try {
-                await sendLocalUpdate({
-                    video_url: effectiveUrl ?? null,
-                    is_playing: true,
-                    playback_time: seekTo,
-                    client_ts: Date.now(),
-                    updated_by: userId,
-                });
-            } catch (e) {
-                console.error("sendLocalUpdate seek error", e);
-            }
+            socketRef.current.emit("playback-update", {
+                roomId,
+                video_url: effectiveUrl ?? null,
+                is_playing: true,
+                playback_time: seekTo,
+            });
         },
-        [sendLocalUpdate, effectiveUrl, userId, onTimeUpdate]
+        [effectiveUrl, roomId, onTimeUpdate]
     );
 
     const setPlayerControls = useCallback((controls: any) => {
@@ -141,7 +139,7 @@ export default function RoomVideoPlayer({
         }
     }, []);
 
-    // if parent asks to seek externally (e.g., CollaborationPanel), forward it to player controls
+    // If parent asks to seek externally
     useEffect(() => {
         if (seekToTime == null) return;
         const controls = playerControlRef.current;
@@ -149,7 +147,6 @@ export default function RoomVideoPlayer({
             controls.seekTo(seekToTime);
             onSeekComplete?.();
         } else {
-            // store pending seek if controls not ready yet
             pendingSeekRef.current = seekToTime;
         }
     }, [seekToTime, onSeekComplete]);
