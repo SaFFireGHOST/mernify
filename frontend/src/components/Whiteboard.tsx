@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { Pencil, Eraser, Undo, Download } from "lucide-react";
+import { Pencil, Eraser, Trash2, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 
 const Whiteboard = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [color, setColor] = useState("#3b82f6");
@@ -22,33 +23,71 @@ const Whiteboard = () => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Set canvas size to container
-    const container = canvas.parentElement;
-    if (container) {
-      canvas.width = container.clientWidth;
-      canvas.height = container.clientHeight - 80; // Account for toolbar height
+    const dpr = window.devicePixelRatio || 1;
+
+    const resizeCanvas = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      // Preserve existing drawing before resize
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      // Set internal dimensions with DPR
+      canvas.width = container.clientWidth * dpr;
+      canvas.height = container.clientHeight * dpr;
+
+      ctx.scale(dpr, dpr);
+
+      // Restore the image data (scaled automatically by putImageData)
+      ctx.putImageData(imageData, 0, 0);
+
+      // If no previous data, set white background
+      if (!imageData.data.length) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, container.clientWidth, container.clientHeight);
+      }
+    };
+
+    // Initial resize
+    resizeCanvas();
+
+    // Window resize listener
+    window.addEventListener("resize", resizeCanvas);
+
+    // ResizeObserver for dynamic container size changes (e.g., from slider)
+    const observer = new ResizeObserver(resizeCanvas);
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
     }
 
-    // Set white background
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return () => {
+      window.removeEventListener("resize", resizeCanvas);
+      observer.disconnect();
+    };
   }, []);
+
+  const getCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     setIsDrawing(true);
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = getCoordinates(e);
 
     ctx.beginPath();
     ctx.moveTo(x, y);
@@ -59,13 +98,10 @@ const Whiteboard = () => {
 
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = getCoordinates(e);
 
     ctx.lineTo(x, y);
     ctx.strokeStyle = tool === "eraser" ? "#ffffff" : color;
@@ -82,18 +118,19 @@ const Whiteboard = () => {
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const container = containerRef.current;
+    if (!container) return;
+
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, container.clientWidth, container.clientHeight);
   };
 
   const downloadCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const url = canvas.toDataURL("image/png");
     const link = document.createElement("a");
     link.download = "whiteboard.png";
@@ -112,7 +149,6 @@ const Whiteboard = () => {
         >
           <Pencil className="w-4 h-4" />
         </Button>
-
         <Button
           variant={tool === "eraser" ? "default" : "outline"}
           size="icon"
@@ -120,9 +156,7 @@ const Whiteboard = () => {
         >
           <Eraser className="w-4 h-4" />
         </Button>
-
         <div className="h-8 w-px bg-border" />
-
         {/* Color Picker */}
         <div className="flex gap-2">
           {colors.map((c) => (
@@ -136,9 +170,7 @@ const Whiteboard = () => {
             />
           ))}
         </div>
-
         <div className="h-8 w-px bg-border" />
-
         {/* Line Width */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Width</span>
@@ -150,20 +182,16 @@ const Whiteboard = () => {
             className="w-24"
           />
         </div>
-
         <div className="h-8 w-px bg-border" />
-
         <Button variant="outline" size="icon" onClick={clearCanvas}>
-          <Undo className="w-4 h-4" />
+          <Trash2 className="w-4 h-4" />
         </Button>
-
         <Button variant="outline" size="icon" onClick={downloadCanvas}>
           <Download className="w-4 h-4" />
         </Button>
       </div>
-
-      {/* Canvas */}
-      <div className="flex-1 relative">
+      {/* Canvas Container */}
+      <div ref={containerRef} className="flex-1 relative">
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
