@@ -7,11 +7,8 @@
     "dev": "nodemon app.js"
   },
   "dependencies": {
-<<<<<<< Updated upstream
     "@supabase/supabase-js": "^2.80.0",
-=======
     "@google/generative-ai": "^0.24.1",
->>>>>>> Stashed changes
     "bcrypt": "^5.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

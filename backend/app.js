@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const roomsRoutes = require('./routes/rooms');
 const roomPlaybackRoutes = require('./routes/roomPlayback');
+const aiRoutes = require('./routes/aiRoutes');
 
 console.log('SUPABASE_URL present:', !!process.env.SUPABASE_URL);
 console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
