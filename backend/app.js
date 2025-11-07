@@ -5,6 +5,7 @@ const authRoutes = require('./routes/auth');
 const roomsRoutes = require('./routes/rooms');
 const roomPlaybackRoutes = require('./routes/roomPlayback');
 const aiRoutes = require('./routes/aiRoutes');
+const strokesRoutes = require('./routes/strokes');
 const cors = require('cors');
 
 console.log('SUPABASE_URL present:', !!process.env.SUPABASE_URL);
@@ -30,6 +31,7 @@ mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
 app.use('/api/auth', authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use('/api/room-playback', roomPlaybackRoutes);
+app.use('/strokes', strokesRoutes);
 
 // Example protected route (test)
 const { verifyToken } = require('./middleware/auth');
