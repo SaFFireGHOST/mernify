@@ -15,8 +15,6 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
 });
 
-
-
 // GET /api/rooms
 // Returns a paginated list of rooms (public endpoint).
 router.get('/', async (req, res) => {
@@ -47,14 +45,6 @@ router.get('/', async (req, res) => {
     }
 });
 
-
-
-
-/**
- * POST /api/rooms
- * Body: { title: string, subject?: string, video_url?: string, thumbnail?: string }
- * Requires: Authorization: Bearer <app-jwt> (verifyToken)
- */
 /**
  * POST /api/rooms
  * Create a new room. Requires auth.
@@ -65,20 +55,19 @@ router.post('/', verifyToken, async (req, res) => {
         const { title, subject = null, video_url = null } = req.body;
         if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title is required' });
 
-        const created_by = req.user?.id; // should be mongo _id string from verifyToken
-        if (!created_by) return res.status(401).json({ error: 'unauthorized' });
+        const created_by = req.user?.id; // should be mongo _id string
 
-        const row = {
+        const roomRow = {
             title: title.trim(),
-            subject: subject ? subject.trim() : null,
+            subject,
             video_url,
             created_by,
+            // thumbnail: thumbnail || null, // if you add thumbnail
         };
 
-        // Insert into public.rooms
-        const { data, error } = await supabaseAdmin
+        const { data: room, error } = await supabaseAdmin
             .from('rooms')
-            .insert([row])
+            .insert([roomRow])
             .select()
             .single();
 
@@ -87,65 +76,21 @@ router.post('/', verifyToken, async (req, res) => {
             return res.status(500).json({ error: error.message || 'failed to create room', detail: error });
         }
 
-        const createdRoom = data; // the inserted room row
-
-        // --- NEW: create initial room_playback row (idempotent) ---
-        // Use upsert on room_id so repeated attempts are safe
-        try {
-            const playbackRow = {
-                room_id: Number(createdRoom.id),
-                video_url: createdRoom.video_url || null,
-                is_playing: false,
-                playback_time: 0,
-                client_ts: 0,
-                updated_by: createdRoom.created_by || null,
-            };
-
-            const { data: pbData, error: pbError } = await supabaseAdmin
-                .from('room_playback')
-                .upsert([playbackRow], { onConflict: 'room_id' })
-                .select()
-                .single();
-
-            if (pbError) {
-                // warn but do not fail room creation (idempotency or FK issues will be visible here)
-                console.warn('Failed to create initial room_playback (non-fatal):', pbError);
-            } else {
-                // optional: you can log pbData for debugging
-                // console.log('Created initial room_playback:', pbData);
-            }
-        } catch (e) {
-            // catch unexpected exceptions and continue (non-fatal)
-            console.warn('Exception while creating initial room_playback (non-fatal):', e);
-        }
-        // ------------------ END room_playback upsert ------------------
-
-        // Return the created room object
-        return res.status(201).json({ room: createdRoom });
+        return res.status(201).json({ room });
     } catch (err) {
         console.error('Create room error:', err);
         return res.status(500).json({ error: 'internal server error' });
     }
 });
 
-/**
- * PATCH /api/rooms/:id
- * Body: { video_url?: string, title?: string, subject?: string }
- * Requires: Authorization: Bearer <app-jwt> (verifyToken)
- */
-/**
- * PATCH /api/rooms/:id
- * Body: { video_url?: string, title?: string, subject?: string }
- * Requires: Authorization: Bearer <app-jwt> (verifyToken)
- *
- * Note: ANY authenticated user can update the room now (no creator-only restriction).
- */
-router.patch('/:id', verifyToken, async (req, res) => {
+// PATCH /api/rooms/:id
+// Update room details (auth optional for demo, but add verifyToken if needed)
+router.patch('/:id', async (req, res) => {
   try {
     const roomId = Number(req.params.id);
-    if (Number.isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
+    if (isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
 
-    // fetch existing room
+    // check room exists
     const { data: existingRoom, error: fetchErr } = await supabaseAdmin
       .from('rooms')
       .select('*')
@@ -215,6 +160,69 @@ router.patch('/:id', verifyToken, async (req, res) => {
   }
 });
 
+// NEW: GET /api/rooms/:roomId/messages - Fetch all messages for a room (public for simplicity)
+router.get('/:roomId/messages', async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+    if (isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
 
+    const { data, error } = await supabaseAdmin
+      .from('room_messages')
+      .select('id, created_at, user_id, content, profiles:room_messages_user_id_fkey (username)')
+      .eq('room_id', roomId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Supabase fetch messages error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Flatten profiles.username
+    const messages = data.map(msg => ({
+      ...msg,
+      username: msg.profiles?.username || 'Unknown'
+    }));
+
+    return res.json({ messages });
+  } catch (err) {
+    console.error('Get messages error:', err);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
+// NEW: POST /api/rooms/:roomId/messages - Send a new message (requires auth)
+router.post('/:roomId/messages', verifyToken, async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+    if (isNaN(roomId)) return res.status(400).json({ error: 'invalid room id' });
+
+    const { content } = req.body;
+    if (!content || typeof content !== 'string') return res.status(400).json({ error: 'content required' });
+
+    const user_id = req.user.id.toString(); // Mongo _id as string
+
+    const { data, error } = await supabaseAdmin
+      .from('room_messages')
+      .insert([{ room_id: roomId, user_id, content }])
+      .select('id, created_at, user_id, content, profiles:room_messages_user_id_fkey (username)')
+      .single();
+
+    if (error) {
+      console.error('Supabase insert message error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Flatten username
+    const message = {
+      ...data,
+      username: data.profiles?.username || 'Unknown'
+    };
+
+    return res.status(201).json({ message });
+  } catch (err) {
+    console.error('Post message error:', err);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
 
 module.exports = router;
