@@ -9,6 +9,7 @@ import heroImage from "@/assets/hero-study.jpg";
 import thumbMath from "@/assets/thumb-math.jpg";
 import thumbPhysics from "@/assets/thumb-physics.jpg";
 import thumbBiology from "@/assets/thumb-biology.jpg";
+import { useAuth } from "@/hooks/use-auth"; // Import the useAuth hook
 
 const initialStudyRooms = [
   {
@@ -39,6 +40,7 @@ const initialStudyRooms = [
 
 const Dashboard = () => {
   const [studyRooms, setStudyRooms] = useState(initialStudyRooms);
+  const { user, signOut } = useAuth(); // Get user and signOut from context
 
   const handleCreateRoom = (room: { title: string; subject: string }) => {
     const newRoom = {
@@ -63,9 +65,24 @@ const Dashboard = () => {
           <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             StudySync
           </h1>
-          <Link to="/auth">
-            <Button variant="outline">Sign In</Button>
-          </Link>
+          
+          {/* Conditional Auth Button */}
+          <div className="flex items-center gap-4">
+            {user ? (
+              <>
+                <span className="text-sm text-muted-foreground hidden sm:inline">
+                  Welcome, {user.username}
+                </span>
+                <Button variant="destructive" onClick={signOut}>
+                  Sign Out
+                </Button>
+              </>
+            ) : (
+              <Link to="/auth">
+                <Button variant="outline">Sign In</Button>
+              </Link>
+            )}
+          </div>
         </div>
       </motion.header>
 

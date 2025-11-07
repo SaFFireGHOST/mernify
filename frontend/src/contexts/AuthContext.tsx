@@ -92,15 +92,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error(errorData.error || 'Sign up failed');
     }
 
-    // You can choose to automatically sign them in or not
-    // This example just shows a success, letting them sign in after
+    // **CHANGE: Automatically sign in the user after successful sign up**
     const data = await res.json();
-    
-    // Or, to auto-login:
-    // setUser(data.user);
-    // setToken(data.token);
-    // localStorage.setItem("token", data.token);
-    // navigate("/");
+    setUser(data.user);
+    setToken(data.token);
+    localStorage.setItem("token", data.token);
+    navigate("/"); // Redirect to dashboard
   };
 
   const signOut = () => {
