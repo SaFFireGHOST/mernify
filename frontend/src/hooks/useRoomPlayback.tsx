@@ -1,7 +1,7 @@
 // src/hooks/useRoomPlayback.ts
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-
+import { useAuth } from '@/hooks/use-auth'; //  Import useAuth
 type PlaybackRow = {
   room_id: number;
   video_url?: string | null;
@@ -15,6 +15,7 @@ type PlaybackRow = {
 export default function useRoomPlayback(roomId: number | string, onRemoteUpdate: (row: PlaybackRow) => void) {
   const [latest, setLatest] = useState<PlaybackRow | null>(null);
   const channelRef = useRef<any>(null);
+  const { token } = useAuth();
 
   useEffect(() => {
     if (!roomId) return;
@@ -70,7 +71,11 @@ export default function useRoomPlayback(roomId: number | string, onRemoteUpdate:
     try {
       const res = await fetch('/api/room-playback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+              'Content-Type': 'application/json',
+              // Add the 'token' to the Authorization header
+              Authorization: `Bearer ${token}`,
+            },
         body: JSON.stringify({ room_id: roomId, ...payload }),
       });
       if (!res.ok) {

@@ -14,6 +14,12 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
  * Upsert playback state for a room.
  * body: { room_id: number|string, video_url?: string, is_playing: boolean, playback_time: number (seconds), client_ts: number (ms), updated_by: string }
  */
+
+
+
+
+
+
 router.post('/', verifyToken, async (req, res) => {
   try {
     const { room_id, video_url = null, is_playing, playback_time, client_ts } = req.body;

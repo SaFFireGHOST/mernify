@@ -225,4 +225,75 @@ router.post('/:roomId/messages', verifyToken, async (req, res) => {
   }
 });
 
+
+/**
+ * PATCH /api/rooms/:id
+ * Body: { video_url?: string, title?: string, subject?: string }
+ * Requires: Authorization: Bearer <app-jwt> (verifyToken)
+ */
+/**
+ * PATCH /api/rooms/:id
+ * Body: { video_url?: string, title?: string, subject?: string }
+ * Requires: Authorization: Bearer <app-jwt> (verifyToken)
+ *
+ * Note: ANY authenticated user can update the room now (no creator-only restriction).
+ */
+router.patch('/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // 1) Read the existing row to compare
+    const { data: oldRoom, error: readErr } = await supabaseAdmin
+      .from('rooms')
+      .select('id, video_url')
+      .eq('id', id)
+      .maybeSingle();
+    if (readErr) return res.status(500).json({ error: readErr.message });
+
+    const updates = {};
+    if (typeof req.body.title !== 'undefined') updates.title = req.body.title;
+    if (typeof req.body.subject !== 'undefined') updates.subject = req.body.subject;
+    if (typeof req.body.video_url !== 'undefined') updates.video_url = req.body.video_url;
+
+    // 2) Apply the room update
+    const { data: updatedRoom, error: updateErr } = await supabaseAdmin
+      .from('rooms')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    // 3) Only reset playback if the URL really changed
+    const urlChanged =
+      typeof updates.video_url !== 'undefined' &&
+      (oldRoom?.video_url || null) !== (updates.video_url || null);
+
+    if (urlChanged) {
+      try {
+        const playbackRow = {
+          room_id: Number(id),
+          video_url: updates.video_url ?? null,
+          is_playing: false,
+          playback_time: 0,
+          client_ts: 0,
+          updated_by: req.user?.id || null,
+        };
+        const { error: pbError } = await supabaseAdmin
+          .from('room_playback')
+          .upsert([playbackRow], { onConflict: 'room_id' })
+          .select()
+          .single();
+        if (pbError) console.warn('room_playback reset warning:', pbError);
+      } catch (e) {
+        console.warn('Exception upserting room_playback after video change:', e);
+      }
+    }
+
+    return res.json({ room: updatedRoom });
+  } catch (err) {
+    console.error('PATCH /api/rooms/:id error:', err);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
 module.exports = router;
