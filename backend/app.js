@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const roomsRoutes = require('./routes/rooms');
 const roomPlaybackRoutes = require('./routes/roomPlayback');
+const aiRoutes = require('./routes/aiRoutes');
+const cors = require('cors');
 
 console.log('SUPABASE_URL present:', !!process.env.SUPABASE_URL);
 console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -14,7 +16,7 @@ if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 const app = express();
 app.use(express.json());
-
+app.use(cors());
 app.use('/api/rooms', roomsRoutes);
 
 // Connect to MongoDB
