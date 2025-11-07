@@ -15,7 +15,7 @@ interface CollaborationPanelProps {
 const CollaborationPanel = ({ activeTab, onTabChange, currentVideoTime, onJumpToTime }: CollaborationPanelProps) => {
   return (
     <div className="glass-card h-[600px] flex flex-col">
-      <Tabs value={activeTab} onValueChange={(v) => onTabChange(v as any)} className="flex-1 flex flex-col">
+      <Tabs value={activeTab} onValueChange={(v) => onTabChange(v as any)} className="flex-1 flex flex-col min-h-0">
         <TabsList className="grid w-full grid-cols-4 bg-muted/50">
           <TabsTrigger 
             value="comments" 
@@ -47,18 +47,26 @@ const CollaborationPanel = ({ activeTab, onTabChange, currentVideoTime, onJumpTo
           </TabsTrigger>
         </TabsList>
 
-        <div className="flex-1 overflow-hidden">
-          <TabsContent value="comments" className="h-full mt-0">
-            <CommentsPanel currentVideoTime={currentVideoTime} onJumpToTime={onJumpToTime} />
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <TabsContent value="comments" className="h-full mt-0 min-h-0">
+            <div className="h-full min-h-0 overflow-hidden">
+              <CommentsPanel currentVideoTime={currentVideoTime} onJumpToTime={onJumpToTime} />
+            </div>
           </TabsContent>
-          <TabsContent value="chat" className="h-full mt-0">
-            <ChatPanel />
+          <TabsContent value="chat" className="h-full mt-0 min-h-0">
+            <div className="h-full min-h-0 overflow-hidden">
+              <ChatPanel />
+            </div>
           </TabsContent>
-          <TabsContent value="ai" className="h-full mt-0">
-            <AIBotPanel />
+          <TabsContent value="ai" className="h-full mt-0 min-h-0">
+            <div className="h-full min-h-0 overflow-hidden">
+              <AIBotPanel />
+            </div>
           </TabsContent>
-          <TabsContent value="whiteboard" className="h-full mt-0">
-            <Whiteboard />
+          <TabsContent value="whiteboard" className="h-full mt-0 min-h-0">
+            <div className="h-full min-h-0 overflow-hidden">
+              <Whiteboard />
+            </div>
           </TabsContent>
         </div>
       </Tabs>
