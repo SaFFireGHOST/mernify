@@ -25,7 +25,7 @@ All in a clean, tabbed interface powered by real-time WebSocket updates.
 | **User Authentication** | Secure JWT-based login/signup |
 | **Room System** | Create or join video rooms with unique IDs |
 | **Real-Time Playback Sync** | Play, pause, seek — instantly mirrored across all users |
-| **Voice Chat** | Integrated real-time voice chat within the room, powered by LiveKit. |
+| **Voice Chat** | Integrated real-time voice chat within the room, powered by LiveKit (Disable Ad Blocker before using it). |
 | **Timestamped Comments** | Pin comments to exact moments in the video |
 | **Live Chat** | Instant messaging within the room |
 | **AI Bot Panel** | Ask questions about the video; get smart responses |
