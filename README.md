@@ -41,7 +41,7 @@ All in a clean, tabbed interface powered by real-time WebSocket updates.
 |------|------------|
 | **Frontend** | React.js, TypeScript, Tailwind CSS, shadcn/ui, Lucide Icons |
 | **Backend** | Node.js, Express.js |
-| **Database** | MongoDB + Mongoose |
+| **Database** | MongoDB + Supabase |
 | **Real-Time** | Socket.io (WebSockets), **LiveKit** (Voice/Video) |
 | **Authentication** | JWT, Supabase Auth |
 | **AI** | Google Gemini API |
