@@ -11,12 +11,6 @@ const cors = require('cors');
 const http = require('http'); // Added for Socket.io
 const { Server } = require('socket.io'); // Added for Socket.io
 
-console.log('SUPABASE_URL present:', !!process.env.SUPABASE_URL);
-console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.log('SERVICE_ROLE_KEY prefix:', process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 8));
-}
-
 const app = express();
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
