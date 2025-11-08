@@ -17,6 +17,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { useAuth } from "@/hooks/use-auth"; // add this import to get current user
 import useRoomRealtime from "@/hooks/useRoomRealtime";
 import { supabase } from '@/lib/supabaseClient';
+import VoiceWidget from "@/components/VoiceWidget";
 
 const youtubeUrlSchema = z.string().trim().regex(
   /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/)[\w-]{11}(\S*)?$/,
@@ -213,6 +214,10 @@ const StudyRoom = () => {
                   )}
                 </AnimatePresence>
               </div>
+              <VoiceWidget
+                roomId={roomId!}
+                identity={user?.id || user?.username || `guest-${Date.now()}`}
+              />
 
               {/* YouTube URL Input */}
               <div className="glass-card p-4">

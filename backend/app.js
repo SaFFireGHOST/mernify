@@ -6,6 +6,7 @@ const roomsRoutes = require('./routes/rooms');
 const roomPlaybackRoutes = require('./routes/roomPlayback');
 const aiRoutes = require('./routes/aiRoutes');
 const strokesRoutes = require('./routes/strokes');
+const livekitRoutes = require('./routes/livekit');
 const cors = require('cors');
 const http = require('http'); // Added for Socket.io
 const { Server } = require('socket.io'); // Added for Socket.io
@@ -37,6 +38,8 @@ app.use('/api/auth', authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use('/api/room-playback', roomPlaybackRoutes);
 app.use('/strokes', strokesRoutes);
+app.use('/api/livekit', livekitRoutes);
+
 
 // Example protected route (test)
 const { verifyToken } = require('./middleware/auth');
