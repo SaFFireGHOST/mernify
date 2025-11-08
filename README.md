@@ -9,19 +9,34 @@
   - **Timeline-synced comments**
   - **Live chat**
   - **Shared whiteboard**
-  - **AI assistant** for video context & summaries
+  - **AI assistant** for instant doubt clarifications
 
 All in a clean, tabbed interface powered by real-time WebSocket updates.
 
 -----
+<!-- 
+## Prerequisites
 
-## Features
+To run StudySync locally, you'll need the following installed:
+
+  * **Node.js $\ge 18$**: Required for running both the backend (Express) and the frontend (React).
+  * **MongoDB**: A running instance (local or remote via [MongoDB Atlas](https://mongodb.com/atlas)).
+  * **npm or yarn**: Package managers for dependency installation.
+  * **External Service Dependencies**: These services are used for authentication, real-time communication, and AI, and require API keys/URLs to function:
+      * **Supabase**: Used for secure authentication and user management.
+      * **Google Gemini API**: Used for the AI Bot Panel features.
+      * **LiveKit**: Provides the infrastructure for **real-time voice chat** and potentially video conferencing features.
+
+----- -->
+
+### Features
 
 | Feature | Description |
 |-------|-----------|
 | **User Authentication** | Secure JWT-based login/signup |
 | **Room System** | Create or join video rooms with unique IDs |
 | **Real-Time Playback Sync** | Play, pause, seek — instantly mirrored across all users |
+| **Voice Chat** | **Integrated real-time voice chat** within the room, powered by LiveKit. |
 | **Timestamped Comments** | Pin comments to exact moments in the video |
 | **Live Chat** | Instant messaging within the room |
 | **AI Bot Panel** | Ask questions about the video; get smart responses |
@@ -41,7 +56,7 @@ All in a clean, tabbed interface powered by real-time WebSocket updates.
 | **Real-Time** | Socket.io (WebSockets), LiveKit |
 | **Authentication** | JWT, Supabase Auth |
 | **AI** | Google Gemini API |
-| **Deployment** | Ready for Vercel (frontend), Render/Heroku (backend), MongoDB Atlas |
+| **Deployment** | Ready for Netifly (frontend), Render (backend), MongoDB Atlas |
 
 -----
 
@@ -183,18 +198,6 @@ EduStream/
 | `playback-update` | `{ isPlaying, currentTime }` | Sync video state |
 | `send-state` | `{ isPlaying, currentTime }` | Send current state to new joiners |
 | `request-state` | - | Request current state on join |
-
------
-
-## Screenshots
-
-*(Add actual screenshots in production)*
-
-> **Collaboration Panel** \> 
-
-> **Whiteboard in Action** \> 
-
------
 
 ## Future Enhancements
 
