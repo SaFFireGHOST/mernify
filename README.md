@@ -2,7 +2,7 @@
 -----
 
 # 🎓 EduStream
-
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Link-brightgreen?style=for-the-badge)](https://edu-stream-pro.netlify.app/)
 **Real-time collaborative video streaming platform** — Watch together, comment on timelines, chat, brainstorm on a whiteboard, and get AI-powered insights. Built with the **MERN stack** and **Socket.io** for seamless synchronization.
 
 ## Overview
