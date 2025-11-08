@@ -37,6 +37,7 @@ export default function VoiceWidget({
   const [joined, setJoined] = useState(false);
   const [micMuted, setMicMuted] = useState(false);      // ⬅ mic (publish) mute
   const [speakerMuted, setSpeakerMuted] = useState(false); // ⬅ speaker (playback) mute
+  const [showStartAudio, setShowStartAudio] = useState(false); // NEW: Track if audio is blocked
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
@@ -44,10 +45,12 @@ export default function VoiceWidget({
   const label = useMemo(() => `lk:${roomId}`, [roomId]);
 
   async function fetchToken() {
+    console.log(`[${label}] Fetching token for room=${roomId}, identity=${identity}`);
     const params = new URLSearchParams({ room: String(roomId), identity });
     const r = await fetch(`${apiBase}/api/livekit/token?${params.toString()}`);
     if (!r.ok) throw new Error(`Token error ${r.status}`);
     const { url, token } = (await r.json()) as { url: string; token: string };
+    console.log(`[${label}] Token fetched successfully, url=${url}`);
     return { url: livekitUrl || url, token };
   }
 
@@ -56,47 +59,65 @@ export default function VoiceWidget({
     if (!room) return;
     const remotes = Array.from(room.remoteParticipants.values());
     const list = remotes.map((p: RemoteParticipant) => p.identity);
-    setParticipants([room.localParticipant.identity, ...list]);
+    const fullList = [room.localParticipant.identity, ...list];
+    console.log(`[${label}] Participants updated:`, fullList);
+    setParticipants(fullList);
   };
 
   async function join() {
     if (joined || joining) return;
     setError(null);
     setJoining(true);
+    console.log(`[${label}] Starting join process`);
     try {
       const { url, token } = await fetchToken();
 
       // Connect per docs: new Room() then room.connect(wsUrl, token)
+      console.log(`[${label}] Connecting to room at ${url}`);
       const room = new Room();
       await room.connect(url, token);
       roomRef.current = room;
-
-      // Ensure browser allows audio playback (must be in user gesture)
-      await room.startAudio();
+      console.log(`[${label}] Connected successfully`);
 
       // Enable + publish microphone (prompts permission on first use)
+      console.log(`[${label}] Enabling microphone`);
       await room.localParticipant.setMicrophoneEnabled(true);
       setMicMuted(false);
+      console.log(`[${label}] Microphone enabled`);
 
       // --- Remote audio subscribe / unsubscribe ---
 
       room.on(
         RoomEvent.TrackSubscribed,
         (track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+          console.log(`[${label}] TrackSubscribed:`, { kind: track.kind, participant: participant.identity, sid: pub.trackSid });
           if (track.kind !== "audio") return;
           const el = track.attach() as HTMLAudioElement; // <audio autoplay>
           el.dataset.lkParticipant = participant.identity;
           el.dataset.lkTrackSid = pub.trackSid || "";
           el.autoplay = true;
           el.muted = speakerMuted; // reflect speaker state (not mic)
+          el.volume = 1; // Ensure full volume
           audioEls.current.set(`${participant.identity}:${pub.trackSid}`, el);
           audioBucketRef.current?.appendChild(el);
+
+          // Debug log to confirm pause state and other audio props
+          console.log(`[${label}] Attached audio element:`, {
+            participant: participant.identity,
+            paused: el.paused,
+            volume: el.volume,
+            muted: el.muted,
+            error: el.error ? el.error.message : null,
+            currentTime: el.currentTime,
+            duration: el.duration,
+          });
         }
       );
 
       room.on(
         RoomEvent.TrackUnsubscribed,
         (track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+          console.log(`[${label}] TrackUnsubscribed:`, { kind: track.kind, participant: participant.identity, sid: pub.trackSid });
           const key = `${participant.identity}:${pub.trackSid}`;
           const el = audioEls.current.get(key);
           if (el) {
@@ -111,8 +132,12 @@ export default function VoiceWidget({
 
       // --- Presence & speakers ---
 
-      room.on(RoomEvent.ParticipantConnected, refreshParticipants);
+      room.on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
+        console.log(`[${label}] ParticipantConnected:`, p.identity);
+        refreshParticipants();
+      });
       room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
+        console.log(`[${label}] ParticipantDisconnected:`, p.identity);
         // cleanup any dangling audio elements for that participant
         [...audioEls.current.entries()]
           .filter(([key]) => key.startsWith(`${p.identity}:`))
@@ -124,6 +149,7 @@ export default function VoiceWidget({
       });
 
       room.on(RoomEvent.ActiveSpeakersChanged, (active: Participant[]) => {
+        console.log(`[${label}] ActiveSpeakersChanged:`, active.map(p => ({ identity: p.identity, level: p.audioLevel })));
         setSpeakers(
           active.map((p) => ({
             identity: p.identity,
@@ -132,8 +158,22 @@ export default function VoiceWidget({
         );
       });
 
+      // NEW: Listen for playback failures (triggers if autoplay blocked)
+      room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        const canPlay = room.canPlaybackAudio;
+        console.log(`[${label}] AudioPlaybackStatusChanged:`, { canPlay });
+        setShowStartAudio(!canPlay);
+      });
+
+      // NEW: Initial check after connect
+      console.log(`[${label}] Initial audio playback check: canPlaybackAudio=${room.canPlaybackAudio}`);
+      if (!room.canPlaybackAudio) {
+        setShowStartAudio(true);
+      }
+
       refreshParticipants();
       setJoined(true);
+      console.log(`[${label}] Join completed successfully`);
     } catch (e: any) {
       console.error(`[${label}] join failed`, e);
       setError(e?.message || "Failed to join voice");
@@ -144,23 +184,30 @@ export default function VoiceWidget({
   }
 
   async function leave() {
+    console.log(`[${label}] Leaving room`);
     try {
       const room = roomRef.current;
       if (room) {
         // detach & remove any <audio> we created
-        [...audioEls.current.values()].forEach((el) => el.remove());
+        [...audioEls.current.values()].forEach((el) => {
+          console.log(`[${label}] Removing audio element for cleanup`);
+          el.remove();
+        });
         audioEls.current.clear();
         room.disconnect();
+        console.log(`[${label}] Disconnected`);
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error(`[${label}] leave error`, e);
     } finally {
       roomRef.current = null;
       setJoined(false);
       setMicMuted(false);
       setSpeakerMuted(false);
+      setShowStartAudio(false);
       setParticipants([]);
       setSpeakers([]);
+      console.log(`[${label}] Leave completed`);
     }
   }
 
@@ -169,26 +216,47 @@ export default function VoiceWidget({
     const room = roomRef.current;
     if (!room) return;
     const next = !micMuted;
+    console.log(`[${label}] Toggling mic to ${next ? 'muted' : 'unmuted'}`);
     try {
       await room.localParticipant.setMicrophoneEnabled(!next); // enabled=false => muted
       setMicMuted(next);
     } catch (e) {
-      console.error("mic toggle failed", e);
+      console.error(`[${label}] mic toggle failed`, e);
     }
   }
 
   // Toggle SPEAKER (playback) mute — mutes all remote <audio> elements locally
   function toggleSpeaker() {
     const next = !speakerMuted;
+    console.log(`[${label}] Toggling speaker to ${next ? 'muted' : 'unmuted'}`);
     setSpeakerMuted(next);
-    for (const el of audioEls.current.values()) {
+    for (const [key, el] of audioEls.current.entries()) {
       el.muted = next;
+      console.log(`[${label}] Updated audio mute for ${key}: ${next}`);
+    }
+  }
+
+  // NEW: Handler for explicit audio start (call on button click)
+  async function startPlayback() {
+    const room = roomRef.current;
+    if (!room) return;
+    console.log(`[${label}] Starting audio playback (user gesture)`);
+    try {
+      await room.startAudio(); // This MUST be in user gesture (button click)
+      setShowStartAudio(false);
+      console.log(`[${label}] Audio playback started successfully`);
+    } catch (e) {
+      console.error(`[${label}] startAudio failed:`, e);
+      setError('Failed to start audio playback');
     }
   }
 
   // auto-join on mount (optional)
   useEffect(() => {
-    if (autoJoin) void join();
+    if (autoJoin) {
+      console.log(`[${label}] Auto-joining on mount`);
+      void join();
+    }
     return () => {
       void leave();
     };
@@ -198,7 +266,9 @@ export default function VoiceWidget({
   // helpful env hint
   useEffect(() => {
     if (!livekitUrl && !import.meta.env.VITE_LIVEKIT_URL) {
-      setError("VITE_LIVEKIT_URL not set and no livekitUrl prop supplied.");
+      const err = "VITE_LIVEKIT_URL not set and no livekitUrl prop supplied.";
+      console.error(`[${label}] ${err}`);
+      setError(err);
     }
   }, [livekitUrl]);
 
@@ -224,6 +294,17 @@ export default function VoiceWidget({
           </button>
         ) : (
           <>
+            {/* NEW: "Start Audio" button if blocked (hides after click) */}
+            {showStartAudio && (
+              <button
+                onClick={startPlayback}
+                className="px-3 py-1.5 rounded bg-yellow-700 hover:bg-yellow-600"
+                title="Click to enable audio playback (browser policy)"
+              >
+                Start Audio
+              </button>
+            )}
+
             <button
               onClick={toggleMic}
               className={`px-3 py-1.5 rounded ${
